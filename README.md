@@ -119,3 +119,7 @@ expires; `list_orgs` shows days left, and `add-org <alias> --replace` logs in ag
 pip install -e ".[dev]"
 pytest
 ```
+
+## License
+
+MIT. See `LICENSE`.
