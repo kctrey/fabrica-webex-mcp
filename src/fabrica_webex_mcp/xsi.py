@@ -257,10 +257,10 @@ def _error_message(response) -> str:
         detail = found.group(1).strip()
     guidance = {
         401: "Xsi rejected the access token; it needs the 'spark-admin:xsi' scope, and tokens issued before it was "
-             "added do not have it. Cisco must enable that scope for your org before it can be requested; if it was "
-             "skipped at login (add-org --no-xsi), registrations are unavailable.",
+             "added do not have it. Cisco must enable that scope for your org; it is only requested when you log in "
+             "with `add-org <alias> --replace --with-xsi`.",
         403: "Xsi refused this request; reading another user's registrations needs the 'spark-admin:xsi' scope "
-             "(which Cisco must approve for your org) and an administrator token.",
+             "(which Cisco must approve for your org, and log in with --with-xsi) and an administrator token.",
         404: "Xsi does not know this subject. That usually means it is not a Webex Calling user, not that the "
              "address is wrong.",
     }.get(response.status_code, f"Xsi-Actions returned HTTP {response.status_code}.")

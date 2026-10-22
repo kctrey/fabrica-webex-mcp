@@ -131,8 +131,10 @@ def test_login_scopes_and_url(tmp_path):
     login.scopes_path().write_text("# c\nspark:kms\nspark:kms\nspark-admin:people_read\n")
     assert login.load_scopes() == "spark:kms spark-admin:people_read"
     login.scopes_path().write_text("spark:kms\nspark-admin:xsi\nspark-admin:people_read\n")
-    assert login.load_scopes((login.XSI_SCOPE,)) == "spark:kms spark-admin:people_read"
-    assert "spark-admin:xsi" in login.load_scopes()
+    assert login.load_scopes() == "spark:kms spark-admin:people_read"  # xsi listed in the file is ignored by default
+    assert login.load_scopes(with_xsi=True) == "spark:kms spark-admin:people_read spark-admin:xsi"
+    login.scopes_path().write_text("spark:kms\n")
+    assert login.load_scopes(with_xsi=True) == "spark:kms spark-admin:xsi"  # added even if the file omits it
     u = login.authorize_url("cid", "http://localhost:8765/callback", "a b", "st")
     assert "redirect_uri=http%3A%2F%2Flocalhost%3A8765%2Fcallback" in u and "state=st" in u
 
@@ -350,4 +352,4 @@ def test_rejected_scope_error_names_xsi():
     import time; time.sleep(0.5)
     urllib.request.urlopen("http://127.0.0.1:8792/callback?error=invalid_scope&state=good")
     t.join()
-    assert "invalid_scope" in out["msg"] and "--no-xsi" in out["msg"]
+    assert "invalid_scope" in out["msg"] and "--with-xsi" in out["msg"]

@@ -39,11 +39,11 @@ yes before any write", verify afterwards) and report recipes (org health, licens
 Some scopes need roles beyond full admin (for example Compliance Officer for compliance scopes). If your
 Integration asks for admin scopes, your org may require approving it in Control Hub.
 
-**`spark-admin:xsi` is not self-service.** It is gated by a Cisco-controlled toggle, so it is only available if
-the Webex product team has approved it for your org. Without it, every tool works except `user_registrations`.
-If your Integration does not have it, Webex rejects the whole login when the scope is requested. Either leave
-it out of `scopes.txt` (it is commented out in `scopes.example.txt`), or keep it listed and log in with
-`fabrica-webex-mcp add-org <alias> --no-xsi`.
+**`spark-admin:xsi` is optional and off by default.** It is gated by a Cisco-controlled toggle, and most orgs
+do not have it: the Webex product team must approve it for your org. Without it, every tool works except
+`user_registrations`. The login never requests it unless you pass `--with-xsi` to `add-org`, even if it is
+listed in `scopes.txt`. Only use the flag if you know Cisco has enabled Xsi for your org and your Integration
+has the scope ticked, because Webex rejects the whole login when a requested scope is not available to you.
 
 ## 2. Install
 
@@ -74,7 +74,9 @@ fabrica-webex-mcp set-writable myorg on
 ```
 
 Other commands: `set-default`, `remove-org`, `add-org <alias> --replace` (re-login), `add-org --refresh-token`
-(paste a refresh token instead of a browser login), and `add-org --no-xsi` (log in without the Xsi scope).
+(paste a refresh token instead of a browser login), and `add-org --with-xsi` (also request the Xsi scope, for
+orgs where Cisco has enabled it; to add it to an org you already registered, run
+`add-org <alias> --replace --with-xsi`).
 
 ## 4. Connect your assistant
 
