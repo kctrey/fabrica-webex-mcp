@@ -130,6 +130,9 @@ def test_login_scopes_and_url(tmp_path):
     from fabrica_webex_mcp import login
     login.scopes_path().write_text("# c\nspark:kms\nspark:kms\nspark-admin:people_read\n")
     assert login.load_scopes() == "spark:kms spark-admin:people_read"
+    login.scopes_path().write_text("spark:kms\nspark-admin:xsi\nspark-admin:people_read\n")
+    assert login.load_scopes((login.XSI_SCOPE,)) == "spark:kms spark-admin:people_read"
+    assert "spark-admin:xsi" in login.load_scopes()
     u = login.authorize_url("cid", "http://localhost:8765/callback", "a b", "st")
     assert "redirect_uri=http%3A%2F%2Flocalhost%3A8765%2Fcallback" in u and "state=st" in u
 
@@ -330,3 +333,21 @@ def test_home_prefers_override_then_appdata(tmp_path, monkeypatch):
     assert config.home() == tmp_path  # FABRICA_WEBEX_MCP_HOME from conftest wins
     monkeypatch.delenv("FABRICA_WEBEX_MCP_HOME")
     assert config.home() == tmp_path / "ad" / "fabrica-webex-mcp"
+
+
+def test_rejected_scope_error_names_xsi():
+    import threading, urllib.request
+    from fabrica_webex_mcp import login
+    out = {}
+
+    def run():
+        try:
+            login.wait_for_code(8792, "good", timeout=5)
+        except TimeoutError as e:
+            out["msg"] = str(e)
+    t = threading.Thread(target=run)
+    t.start()
+    import time; time.sleep(0.5)
+    urllib.request.urlopen("http://127.0.0.1:8792/callback?error=invalid_scope&state=good")
+    t.join()
+    assert "invalid_scope" in out["msg"] and "--no-xsi" in out["msg"]

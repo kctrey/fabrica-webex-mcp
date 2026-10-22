@@ -43,7 +43,7 @@ def cmd_add_org(a) -> None:
     if a.refresh_token:
         refresh_token = getpass.getpass(f"Refresh token for '{a.alias}': ").strip()
     else:
-        code, redirect = login.run_login(a.port)
+        code, redirect = login.run_login(a.port, (login.XSI_SCOPE,) if a.no_xsi else ())
     old = store.get_tokens(a.alias)
     try:
         org = asyncio.run(_acquire(a.alias, refresh_token, code, redirect))
@@ -118,6 +118,8 @@ def main() -> None:
     s.add_argument("alias"); s.add_argument("--replace", action="store_true")
     s.add_argument("--port", type=int, default=login.DEFAULT_PORT)
     s.add_argument("--refresh-token", action="store_true", help="paste a refresh token instead of logging in")
+    s.add_argument("--no-xsi", action="store_true",
+                   help="leave spark-admin:xsi out of the login (not approved for your org); disables user_registrations")
     s.set_defaults(f=cmd_add_org)
     sub.add_parser("list-orgs").set_defaults(f=cmd_list_orgs)
     s = sub.add_parser("test-org"); s.add_argument("alias", nargs="?"); s.set_defaults(f=cmd_test_org)

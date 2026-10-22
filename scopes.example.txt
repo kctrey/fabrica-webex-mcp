@@ -19,8 +19,11 @@ analytics:read_all
 audit:events_read
 identity:people_read
 
-# --- User registrations (Xsi-Actions); needed by the user_registrations tool ---
-spark-admin:xsi
+# --- User registrations (Xsi-Actions); needed only by the user_registrations tool ---
+# Cisco must enable this scope for your org (it is not self-service). If your Integration does not have it,
+# Webex rejects the whole login, so leave it commented out unless you know it is approved. If you list it and
+# the login fails, re-run `fabrica-webex-mcp add-org <alias> --no-xsi`.
+# spark-admin:xsi
 
 # --- Writes: add only if you will mark an org writable (`fabrica-webex-mcp set-writable <alias> on`) ---
 # spark-admin:people_write

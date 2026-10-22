@@ -39,6 +39,12 @@ yes before any write", verify afterwards) and report recipes (org health, licens
 Some scopes need roles beyond full admin (for example Compliance Officer for compliance scopes). If your
 Integration asks for admin scopes, your org may require approving it in Control Hub.
 
+**`spark-admin:xsi` is not self-service.** It is gated by a Cisco-controlled toggle, so it is only available if
+the Webex product team has approved it for your org. Without it, every tool works except `user_registrations`.
+If your Integration does not have it, Webex rejects the whole login when the scope is requested. Either leave
+it out of `scopes.txt` (it is commented out in `scopes.example.txt`), or keep it listed and log in with
+`fabrica-webex-mcp add-org <alias> --no-xsi`.
+
 ## 2. Install
 
 ```
@@ -68,7 +74,7 @@ fabrica-webex-mcp set-writable myorg on
 ```
 
 Other commands: `set-default`, `remove-org`, `add-org <alias> --replace` (re-login), `add-org --refresh-token`
-(paste a refresh token instead of a browser login).
+(paste a refresh token instead of a browser login), and `add-org --no-xsi` (log in without the Xsi scope).
 
 ## 4. Connect your assistant
 
@@ -110,8 +116,8 @@ expires; `list_orgs` shows days left, and `add-org <alias> --replace` logs in ag
   calling workspace license.
 - Outbound Calling Plan status is one lookup per licensed person/workspace and only applies to Cisco Calling
   Plan locations (others show as "not applicable"). Use `include_ocp=false` for a quick report on large orgs.
-- Registrations need the `spark-admin:xsi` scope and the subject must be a Webex Calling user, workspace or
-  virtual line. Live Xsi-Events subscriptions are deliberately not supported.
+- Registrations need the `spark-admin:xsi` scope, which Cisco must enable for your org (see above), and the
+  subject must be a Webex Calling user, workspace or virtual line. Live Xsi-Events subscriptions are deliberately not supported.
 
 ## Development
 
