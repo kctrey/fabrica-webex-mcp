@@ -42,7 +42,7 @@ Integration asks for admin scopes, your org may require approving it in Control 
 ## 2. Install
 
 ```
-pipx install git+https://<your-repo-url>/fabrica-webex-mcp
+pipx install git+https://github.com/kctrey/fabrica-webex-mcp
 ```
 
 or from a checkout: `pip install -e .` (add `[dev]` to run the tests).
