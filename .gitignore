@@ -1,0 +1,10 @@
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.venv/
+build/
+dist/
+# local secrets and config never belong in the repo
+scopes.txt
+orgs.json
+.env

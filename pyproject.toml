@@ -1,0 +1,23 @@
+[project]
+name = "fabrica-webex-mcp"
+version = "0.1.0"
+description = "Local stdio MCP server for the Webex REST API (multi-org, Integration OAuth)"
+requires-python = ">=3.11"
+dependencies = ["mcp>=1.2,<2", "httpx>=0.27", "keyring>=25"]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio"]
+
+[project.scripts]
+fabrica-webex-mcp = "fabrica_webex_mcp.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
