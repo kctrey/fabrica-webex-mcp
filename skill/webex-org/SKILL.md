@@ -5,7 +5,7 @@ description: Query, report on, and (with confirmation) change the user's Webex d
 
 # Webex org management
 
-Use the `fabrica-webex` MCP tools (`webex_request`, `list_orgs`, `people_with_licenses`, `workspace_inventory`, `license_assignment_by_location`, `user_registrations`). Auth, token refresh, pagination, and 429 retry are handled by the server; never ask the user for tokens.
+Use the `fabrica-webex` MCP tools (`webex_request`, `list_orgs`, `people_with_licenses`, `workspace_inventory`, `license_assignment_by_location`, `user_registrations`, `calling_feature_audit`, `calling_feature_bulk_update`). Auth, token refresh, pagination, and 429 retry are handled by the server; never ask the user for tokens.
 
 ## Orgs
 - Call `list_orgs` first when the org is unclear. Every tool takes `org` (an alias); omitted means the default org. `org="all"` runs a **read** across every org and groups results by alias.
@@ -19,6 +19,20 @@ Use the `fabrica-webex` MCP tools (`webex_request`, `list_orgs`, `people_with_li
   - Results with `"truncated": true` mean more exist. Say so rather than presenting a partial list as complete; raise `max_items` or filter if the user needs everything.
   - Paths are relative to `https://webexapis.com/v1`. Calling responses may wrap the list under another key (`locations`, `queues`, `phoneNumbers`); the server normalizes these to `items` and adds `"collection": "<key>"`.
 - Counts: use the length of `items` only if not truncated.
+
+## Auditing or changing a Calling feature across many subjects
+**"All users" means people, workspaces AND virtual lines** unless the user says otherwise. Never answer an "everyone with X" question from `/people` alone; that is how workspaces and virtual lines get missed.
+
+Use `calling_feature_audit` (read-only) for any check and `calling_feature_bulk_update` for any change that touches more than a couple of subjects. Do not loop `webex_request` per subject.
+- `calling_feature_audit(feature, fields=[...], filter="path == value")`: features `voicemail`, `doNotDisturb`, `callForwarding`, `callRecording`. Output is a header plus array rows, with counts per subject type, the org-level setting, `related_non_defaults`, `not_applicable` and `errors`. Report the counts, the answer, then the exceptions. Say so if `truncated` is true or `warnings` appear (a subject type with no mapped endpoint was **not audited**; never call that "none").
+- **Not applicable is normal, not a gap**: a person with no Calling location, a workspace on a "Webex Calling - Workspaces" or "Hot desk only" license (voicemail answers 405) have no such feature. An `errors` entry is a real failure: say it.
+- **Always read `related_non_defaults`.** It flags settings outside the fields you asked about that change the outcome (voicemail: `messageStorage.storageType=EXTERNAL`, notifications, fax). It is judged on every subject, not just matches. Mention anything in it that bears on the question.
+- **Change flow, no shortcuts**: (1) `calling_feature_bulk_update(dry_run=true)` (the default), (2) show the user the plan: org, feature, change, each target's before/after, warnings, related flags, `writable`, (3) wait for an explicit yes, (4) repeat the call with the SAME arguments plus `dry_run=false`, `plan_id` from the plan and `allow_write=true`. The server refuses if the state or arguments changed since the plan; re-plan and ask again, do not retry blindly. A single org only. `canary_first` (default) writes and verifies one target before the rest; if it fails, stop and tell the user. Report the results table (before/after/verified/error) and any `side_effects`.
+- `targets` takes names, emails, extensions or ids; `"org"` targets the org-level setting (the full body is sent back with only your key changed); `"from_audit"` reuses the audit `filter`/`subjects`/`location`.
+- A partial PUT is known to work for people voicemail. For workspaces and virtual lines it is unverified (the plan warns); the canary is the test.
+- A new feature is one row in `calling_features.FEATURES`; verify each path against the live org first, because a wrong path is a 404 "No static resource" (the audit reports that as an error, never as not applicable).
+
+**Voicemail lesson (learned the hard way).** "Voicemail to email" is not only `emailCopyOfMessage.enabled`. `messageStorage.storageType=EXTERNAL` delivers voicemail to email even with the copy setting off. In one org turning off the org-level `voiceMessageForwardingEnabled` (`/telephony/config/voicemail/settings`) switched a user's EXTERNAL storage to INTERNAL by itself. So an audit for voicemail-to-email checks the copy flag, `storageType`, and the org-level setting, and a change to one should be re-audited for the others. Workspaces need a Professional license for voicemail; Workspaces (common area) and Hot desk only workspaces return 405.
 
 ## Writing (POST/PUT/PATCH/DELETE)
 1. Describe the exact change (org, endpoint, body, what it affects) and get the user's explicit yes in chat first. Never batch destructive changes under one yes without listing them.
@@ -39,6 +53,8 @@ These are real orgs: prefer one item first, then the rest.
 | Numbers | `/telephony/config/numbers` | `phoneNumber,state,owner.type` |
 | Announcement repository | `/telephony/config/announcements` (org level), `?locationId=` for a location's own, `/announcements/usage` for limits | `id,name,fileName,level` |
 | Person voicemail settings | `/people/{id}/features/voicemail` (`sendUnansweredCalls.numberOfRings`, greeting state) | |
+| Workspace / virtual line voicemail | `/telephony/config/workspaces/{id}/voicemail`, `/telephony/config/virtualLines/{id}/voicemail` (workspace needs a Professional license, else 405) | |
+| Org voicemail settings | `/telephony/config/voicemail/settings` (`voiceMessageForwardingEnabled`) | |
 | Admin/audit events | `/adminAudit/events`* (needs `orgId`, `from`, `to`) | |
 | Org events | `/events` | `resource,type,created` |
 | CDR | `https://analytics.webexapis.com/v1/cdr_feed` (full URL, different host) | |

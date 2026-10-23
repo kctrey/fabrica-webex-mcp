@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-from . import announcements, config, license_report, output, store, xsi
+from . import announcements, calling_features, config, license_report, output, store, xsi
 from .client import WebexClient
 
 mcp = FastMCP("fabrica-webex")
@@ -202,6 +202,65 @@ async def license_assignment_by_location(org: str | None = None, include_ocp: bo
         report.pop("_entities")
         out[alias] = {**report, "entities": entities} if location else report
     return output.fit(out[alias] if org != "all" else {"by_org": out}, 60000)
+
+
+@mcp.tool()
+async def calling_feature_audit(feature: str, org: str | None = None, subjects: list[str] | None = None,
+                                fields: list[str] | str | None = None, filter: str | None = None,
+                                location: str | None = None, max_rows: int = 300) -> str:
+    """Read one Calling feature for EVERY person, workspace and virtual line in an org and return a compact table.
+
+    feature: voicemail, doNotDisturb, callForwarding, callRecording (see calling_features.FEATURES; a new feature
+    is one table row). subjects: any of people, workspaces, virtual_lines (default all three). fields: dotted paths
+    to show, e.g. ["emailCopyOfMessage.enabled","messageStorage.storageType"] (default per feature). filter: e.g.
+    "emailCopyOfMessage.enabled == true" (ops == != >= <= > <, join with "and"); judged on the full response, and the
+    filter field is added to the columns. location: location name. Returns counts per subject type, the org-level
+    setting (voicemail: /telephony/config/voicemail/settings), the matching rows, `related_non_defaults` (settings
+    outside your fields that change the outcome, e.g. voicemail storageType=EXTERNAL, judged on ALL scanned subjects,
+    not only matches), and separate not_applicable / errors lists (e.g. a workspace on a Workspace license has no
+    voicemail). People without a Calling location are listed as not applicable. `truncated` is set if rows were cut.
+    Read-only; org may be "all".
+    """
+    if isinstance(fields, str):
+        fields = _csv(fields)
+    out = {}
+    for alias in _targets(org):
+        out[alias] = await calling_features.audit(client(), alias, feature, subjects, fields, filter, location, max_rows)
+    return output.fit(out[alias] if org != "all" else {"by_org": out}, 60000)
+
+
+@mcp.tool()
+async def calling_feature_bulk_update(feature: str, targets: list[str] | str, change: dict, org: str | None = None,
+                                      dry_run: bool = True, plan_id: str | None = None, canary_first: bool = True,
+                                      subjects: list[str] | None = None, filter: str | None = None,
+                                      location: str | None = None, allow_write: bool = False) -> str:
+    """Change one Calling feature on many people, workspaces and virtual lines (and/or the org-level setting).
+
+    targets: names, emails, extensions or ids, "org" for the org-level setting (e.g. voicemail
+    /telephony/config/voicemail/settings: the full body is sent back with only your key changed), or "from_audit"
+    with the same `filter` (and optional `subjects`, `location`) as calling_feature_audit. change: partial body,
+    e.g. {"emailCopyOfMessage":{"enabled":false}}. A single org only; never "all".
+
+    dry_run=true (default) reads current state and returns a before/after plan, warnings, related non-default
+    settings and a plan_id; nothing is written. To apply: show the plan to the user, get an explicit yes, then call
+    again with dry_run=false, the SAME arguments, plan_id from the plan, and allow_write=true. The call is refused,
+    with nothing written, if plan_id is missing or the current state or arguments differ from the plan. With
+    canary_first (default) the first target is written and read back before the rest; a failure stops everything.
+    Every target is verified by a GET; the result has one row each (before/after/verified/error) plus side effects
+    seen in other fields. Requires allow_write=true (not for dry_run) and a writable org.
+    """
+    if org == "all":
+        raise ValueError("Writes cannot target org='all'.")
+    if dry_run:
+        alias = config.resolve(org)
+        plan, _ = await calling_features.build_plan(client(), alias, feature, targets, change, subjects, filter, location)
+        plan["writable"] = bool(config.get_org(alias).get("writable", False))
+        plan["next_step"] = ("Review, get an explicit yes, then repeat this call with dry_run=false, the same arguments, "
+                             f"plan_id={plan['plan_id']} and allow_write=true.")
+        return output.fit(plan, 60000)
+    alias = _write_alias(org, allow_write)
+    return output.fit(await calling_features.bulk_update(
+        client(), alias, feature, targets, change, plan_id or "", canary_first, subjects, filter, location), 60000)
 
 
 @mcp.tool()

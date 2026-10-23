@@ -17,6 +17,8 @@ confirmation) change Webex orgs you administer, plus a skill that tells the assi
 | `people_with_licenses` | People with license IDs resolved to names |
 | `workspace_inventory` | Workspaces with location names and calling type |
 | `license_assignment_by_location` | Webex Calling Professional / Workspace / Outbound Calling Plan counts per location, computed server-side (one call instead of ~100) |
+| `calling_feature_audit` | Read one Calling feature (voicemail, doNotDisturb, callForwarding, callRecording) for every person, workspace and virtual line: counts, a compact table, the org-level setting, related non-default settings, and separate not-applicable / error lists. Read-only |
+| `calling_feature_bulk_update` | Change that feature on many subjects (or the org-level setting): `dry_run` returns a before/after plan and a `plan_id`; applying needs the matching `plan_id`, `allow_write=true` and a writable org, updates a canary first, then verifies every target |
 | `user_registrations` | Live SIP registrations (device, MAC, IPs, expiry) for a user, workspace or virtual line, by name or email, via Xsi-Actions |
 | `inspect_audio` | Check a local WAV (format, rate, duration, size) before upload. Read-only, standard library only |
 | `list_announcements` | Announcement Repository files (org or location level), storage usage, optional per-file reference counts |
