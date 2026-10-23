@@ -113,6 +113,54 @@ async def test_write_guard():
         await server.webex_request("DELETE", "/people/x", org="all", allow_write=True)
 
 
+async def test_multipart_upload_sent_with_file_and_form():
+    seed()
+    seen = {}
+
+    def h(req):
+        seen["ctype"] = req.headers["content-type"]
+        seen["body"] = req.content
+        return httpx.Response(204)
+    r = await mk(h).request("demo", "POST", "/people/p1/features/voicemail/actions/uploadNoAnswerGreeting/invoke",
+                            files={"file": ("g.wav", b"RIFFdata", "audio/wav")}, form={"note": "x"})
+    assert r == {"status": 204}
+    assert seen["ctype"].startswith("multipart/form-data; boundary=")
+    assert b'name="file"; filename="g.wav"' in seen["body"] and b"RIFFdata" in seen["body"]
+    assert b'name="note"' in seen["body"]
+
+
+async def test_multipart_and_json_body_are_exclusive():
+    seed()
+    with pytest.raises(ValueError, match="not both"):
+        await mk(lambda req: httpx.Response(204)).request("demo", "POST", "/x", body={}, files={"file": ("a", b"b", "x/y")})
+
+
+async def test_upload_tool_guards(tmp_path):
+    seed(writable=True)
+    f = tmp_path / "g.wav"
+    f.write_bytes(b"abc")
+    with pytest.raises(PermissionError, match="allow_write"):  # uploads are writes, so the same guard applies
+        await server.webex_request("POST", "/x", file_path=str(f))
+    with pytest.raises(ValueError, match="only supported for POST"):
+        await server.webex_request("GET", "/x", file_path=str(f))
+    with pytest.raises(ValueError, match="not both"):
+        await server.webex_request("POST", "/x", body={}, file_path=str(f), allow_write=True)
+    with pytest.raises(ValueError, match="not found"):
+        await server.webex_request("POST", "/x", file_path=str(tmp_path / "nope.wav"), allow_write=True)
+    big = tmp_path / "big.wav"
+    big.write_bytes(b"0" * (server.MAX_UPLOAD_BYTES + 1))
+    with pytest.raises(ValueError, match="larger than"):
+        await server.webex_request("POST", "/x", file_path=str(big), allow_write=True)
+
+
+def test_load_upload_guesses_content_type(tmp_path):
+    f = tmp_path / "greeting.wav"
+    f.write_bytes(b"abc")
+    name, data, ctype = server._load_upload(str(f))
+    assert (name, data) == ("greeting.wav", b"abc")
+    assert ctype in {"audio/wav", "audio/x-wav", "audio/vnd.wave"}  # varies by platform mime table
+
+
 async def test_exchange_code_saves_tokens():
     store.set_client("cid", "secret")
     seen = {}

@@ -59,12 +59,13 @@ class WebexClient:
         self.http = http
 
     async def _send(self, alias: str, method: str, url: str, params, body,
-                    headers: dict | None = None) -> httpx.Response:
+                    headers: dict | None = None, files: dict | None = None,
+                    form: dict | None = None) -> httpx.Response:
         token = await auth.get_access_token(alias, self.http)
         refreshed = False
         for attempt in range(MAX_RETRIES + 1):
             r = await self.http.request(
-                method, url, params=params, json=body,
+                method, url, params=params, json=body, files=files, data=form,
                 headers={**(headers or {}), "Authorization": f"Bearer {token}"},
             )
             if r.status_code == 401 and not refreshed:
@@ -96,16 +97,23 @@ class WebexClient:
         self, alias: str, method: str, path: str,
         query: dict | None = None, body: dict | list | None = None,
         max_items: int | None = None,
+        files: dict | None = None, form: dict | None = None,
     ) -> dict:
-        """Returns {"status", "data"|"items", "pages", "truncated"}. GET follows rel="next"."""
+        """Returns {"status", "data"|"items", "pages", "truncated"}. GET follows rel="next".
+
+        `files` ({field: (filename, bytes, content_type)}) and `form` send a multipart/form-data body
+        instead of JSON; they are mutually exclusive with `body`.
+        """
         method = method.upper()
+        if (files or form) and body is not None:
+            raise ValueError("Pass either a JSON body or file/form fields, not both.")
         url, params = build_url(path, query)
         items: list = []
         collection = None
         pages = 0
         truncated = False
         while True:
-            r = await self._send(alias, method, url, params, body)
+            r = await self._send(alias, method, url, params, body, files=files, form=form)
             pages += 1
             if r.status_code >= 400:
                 try:

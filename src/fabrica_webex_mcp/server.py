@@ -1,5 +1,7 @@
 """MCP server (stdio). Every tool takes `org` (alias); GET-only tools also accept "all"."""
+import mimetypes
 import time
+from pathlib import Path
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -28,6 +30,20 @@ def _targets(org: str | None) -> list[str]:
             raise config.ConfigError("No orgs registered. Run `fabrica-webex-mcp add-org`.")
         return aliases
     return [config.resolve(org)]
+
+
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
+def _load_upload(file_path: str) -> tuple[str, bytes, str]:
+    """Read a local file for a multipart upload: (filename, bytes, content_type)."""
+    p = Path(file_path).expanduser()
+    if not p.is_file():
+        raise ValueError(f"Upload file not found: {file_path}")
+    if p.stat().st_size > MAX_UPLOAD_BYTES:
+        raise ValueError(f"Upload file is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB: {file_path}")
+    ctype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+    return p.name, p.read_bytes(), ctype
 
 
 def _csv(s: str | None) -> list[str] | None:
@@ -62,6 +78,9 @@ async def webex_request(
     max_items: int = 200,
     max_chars: int = 40000,
     allow_write: bool = False,
+    file_path: str | None = None,
+    file_field: str = "file",
+    form: dict | None = None,
 ) -> str:
     """Call any Webex REST endpoint (https://webexapis.com/v1) as the chosen org.
 
@@ -70,10 +89,22 @@ async def webex_request(
     pagination automatically up to max_items. `fields` is a comma list of dotted keys to keep
     per item (e.g. "id,displayName,emails"). Use org="all" for GET across every org.
     POST/PUT/PATCH/DELETE require allow_write=true AND the org to be marked writable.
+
+    File upload (POST/PUT/PATCH only): pass `file_path` (a local file, max 10 MB) to send a
+    multipart/form-data request, e.g. a WAV voicemail greeting. `file_field` is the form field name
+    (default "file"); `form` adds extra text fields. Cannot be combined with `body`.
     """
     method = method.upper()
     if method not in READ | WRITE:
         raise ValueError(f"Unsupported method {method}")
+    files = None
+    if file_path or form:
+        if method not in {"POST", "PUT", "PATCH"}:
+            raise ValueError("File/form uploads are only supported for POST, PUT and PATCH.")
+        if body is not None:
+            raise ValueError("Pass either `body` (JSON) or `file_path`/`form` (multipart), not both.")
+    if file_path:
+        files = {file_field: _load_upload(file_path)}
     if method in WRITE:
         if org == "all":
             raise ValueError("Writes cannot target org='all'.")
@@ -87,7 +118,8 @@ async def webex_request(
     keep = _csv(fields)
     results = {}
     for alias in _targets(org):
-        r = await client().request(alias, method, path, query, body, max_items=max_items if method == "GET" else None)
+        r = await client().request(alias, method, path, query, body,
+                                   max_items=max_items if method == "GET" else None, files=files, form=form)
         if "items" in r:
             r["items"] = output.select(r["items"], keep)
         elif "data" in r:
