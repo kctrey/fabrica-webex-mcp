@@ -1,12 +1,13 @@
 """MCP server (stdio). Every tool takes `org` (alias); GET-only tools also accept "all"."""
 import mimetypes
+import os
 import time
 from pathlib import Path
 
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-from . import config, license_report, output, store, xsi
+from . import announcements, config, license_report, output, store, xsi
 from .client import WebexClient
 
 mcp = FastMCP("fabrica-webex")
@@ -32,7 +33,22 @@ def _targets(org: str | None) -> list[str]:
     return [config.resolve(org)]
 
 
+def _write_alias(org: str | None, allow_write: bool) -> str:
+    """Resolve the org for a write and enforce both guards (allow_write on the call, org marked writable)."""
+    if org == "all":
+        raise ValueError("Writes cannot target org='all'.")
+    alias = config.resolve(org)
+    if not allow_write:
+        raise PermissionError("Write blocked: pass allow_write=true to confirm this change.")
+    if not config.get_org(alias).get("writable", False):
+        raise PermissionError(
+            f"Org '{alias}' is read-only. Run `fabrica-webex-mcp set-writable {alias} on` to enable writes."
+        )
+    return alias
+
+
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+UPLOAD_DIR_ENV = "WEBEX_MCP_UPLOAD_DIR"  # optional: if set, uploads may only come from inside this folder
 
 
 def _load_upload(file_path: str) -> tuple[str, bytes, str]:
@@ -40,6 +56,9 @@ def _load_upload(file_path: str) -> tuple[str, bytes, str]:
     p = Path(file_path).expanduser()
     if not p.is_file():
         raise ValueError(f"Upload file not found: {file_path}")
+    allowed = os.environ.get(UPLOAD_DIR_ENV)
+    if allowed and not p.resolve().is_relative_to(Path(allowed).expanduser().resolve()):
+        raise ValueError(f"Uploads are restricted to {allowed} ({UPLOAD_DIR_ENV}); {file_path} is outside it.")
     if p.stat().st_size > MAX_UPLOAD_BYTES:
         raise ValueError(f"Upload file is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB: {file_path}")
     ctype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
@@ -106,15 +125,7 @@ async def webex_request(
     if file_path:
         files = {file_field: _load_upload(file_path)}
     if method in WRITE:
-        if org == "all":
-            raise ValueError("Writes cannot target org='all'.")
-        alias = config.resolve(org)
-        if not allow_write:
-            raise PermissionError("Write blocked: pass allow_write=true to confirm this change.")
-        if not config.get_org(alias).get("writable", False):
-            raise PermissionError(
-                f"Org '{alias}' is read-only. Run `fabrica-webex-mcp set-writable {alias} on` to enable writes."
-            )
+        _write_alias(org, allow_write)
     keep = _csv(fields)
     results = {}
     for alias in _targets(org):
@@ -204,6 +215,93 @@ async def user_registrations(entries: str, org: str | None = None) -> str:
     """
     alias = config.resolve(org)
     return output.fit({"org": alias, "results": await xsi.lookup(client(), alias, entries)}, 60000)
+
+
+@mcp.tool()
+def inspect_audio(file_path: str) -> str:
+    """Check a local WAV before uploading it: format, channels, sample rate, duration, size, and anything
+    Webex is likely to reject. Read-only, standard library only; it never converts or modifies the file."""
+    _, data, _ = _load_upload(file_path)
+    return output.dumps(announcements.inspect_wav(data))
+
+
+@mcp.tool()
+def list_announcement_slots() -> str:
+    """The greeting slots assign_announcement can set, per feature (call queue, auto attendant), with how many
+    files each takes and whether the write path has been verified against a live org."""
+    return output.dumps({"slots": announcements.slot_table()})
+
+
+@mcp.tool()
+async def list_announcements(location: str | None = None, include_references: bool = False,
+                             org: str | None = None) -> str:
+    """Announcement Repository files: org-level, or one location's own when `location` (name or id) is given.
+
+    include_references adds featureReferenceCount per file (one extra call each); a file with references cannot
+    be deleted. Also returns the org's storage usage and per-file size limit.
+    """
+    alias = config.resolve(org)
+    items = await announcements.list_announcements(client(), alias, location, include_references)
+    rows = [{k: a.get(k) for k in ("id", "name", "fileName", "fileSize", "mediaFileType", "level", "lastUpdated",
+                                   "isTextToSpeech", "featureReferenceCount") if k in a} for a in items]
+    return output.fit({"org": alias, "count": len(rows), "usage": await announcements.usage(client(), alias),
+                       "items": rows}, 40000)
+
+
+@mcp.tool()
+async def upload_announcement(file_path: str, name: str, location: str | None = None, org: str | None = None,
+                              allow_write: bool = False) -> str:
+    """Upload a local WAV to the Announcement Repository (org level, or a location's when `location` is given).
+
+    The file is checked first (format, size against the org's limit). `name` is the announcement's display
+    name (required by Webex). Afterwards use assign_announcement to point a queue or auto attendant at it.
+    Requires allow_write=true and a writable org.
+    """
+    alias = _write_alias(org, allow_write)
+    return output.dumps({"org": alias, **await announcements.upload(client(), alias, _load_upload(file_path), name, location)})
+
+
+@mcp.tool()
+async def assign_announcement(feature: str, entity: str, slot: str, announcements_to_play: list[str] | None = None,
+                              location: str | None = None, dry_run: bool = False, org: str | None = None,
+                              allow_write: bool = False) -> str:
+    """Point a feature's greeting slot at repository announcements (greeting becomes CUSTOM).
+
+    feature: "queue" or "auto_attendant" (see list_announcement_slots for slots such as welcome, comfort, moh,
+    whisper, overflow, business_hours, after_hours). entity: the queue/auto attendant name or id; add `location`
+    if the name is not unique. announcements_to_play: names or ids from the repository, in play order (queues
+    take up to 4); leave empty to return the slot to DEFAULT. Returns the slot before and after (keep `before` to
+    undo) plus warnings. dry_run=true shows the exact request without changing anything. NOTE: Webex keeps
+    old file links when a slot returns to DEFAULT, so avoid attaching test files to live features.
+    Requires allow_write=true (not for dry_run) and a writable org.
+    """
+    alias = config.resolve(org) if dry_run else _write_alias(org, allow_write)
+    return output.fit({"org": alias, **await announcements.assign(
+        client(), alias, feature, entity, slot, announcements_to_play or [], location, dry_run)}, 40000)
+
+
+@mcp.tool()
+async def delete_announcement(announcement: str, location: str | None = None, org: str | None = None,
+                              allow_write: bool = False) -> str:
+    """Delete one Announcement Repository file (by name or id; add `location` for a location-level file).
+
+    Refused up front when any feature still references the file, with an explanation of how to free it.
+    Requires allow_write=true and a writable org.
+    """
+    alias = _write_alias(org, allow_write)
+    return output.dumps({"org": alias, **await announcements.delete(client(), alias, announcement, location)})
+
+
+@mcp.tool()
+async def set_voicemail_greeting(person: str, file_path: str, kind: str = "no_answer", org: str | None = None,
+                                 allow_write: bool = False) -> str:
+    """Upload a custom voicemail greeting WAV for a person (email or exact display name) and read it back.
+
+    kind: "no_answer" (unanswered calls) or "busy". Requires allow_write=true and a writable org.
+    """
+    alias = _write_alias(org, allow_write)
+    return output.dumps({"org": alias, **await announcements.set_voicemail_greeting(
+        client(), alias, person, kind, _load_upload(file_path))})
 
 
 def run() -> None:
