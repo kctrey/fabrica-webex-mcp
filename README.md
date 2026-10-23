@@ -18,6 +18,17 @@ confirmation) change Webex orgs you administer, plus a skill that tells the assi
 | `workspace_inventory` | Workspaces with location names and calling type |
 | `license_assignment_by_location` | Webex Calling Professional / Workspace / Outbound Calling Plan counts per location, computed server-side (one call instead of ~100) |
 | `user_registrations` | Live SIP registrations (device, MAC, IPs, expiry) for a user, workspace or virtual line, by name or email, via Xsi-Actions |
+| `inspect_audio` | Check a local WAV (format, rate, duration, size) before upload. Read-only, standard library only |
+| `list_announcements` | Announcement Repository files (org or location level), storage usage, optional per-file reference counts |
+| `upload_announcement` | Upload a WAV to the repository (org or location level) after validating it against the org's limits |
+| `assign_announcement` | Point a call queue or auto attendant greeting slot at repository files; `dry_run` preview, returns before/after and warnings |
+| `delete_announcement` | Delete a repository file, refusing while any feature still references it |
+| `set_voicemail_greeting` | Upload a person's custom no-answer or busy voicemail greeting and read it back |
+| `list_announcement_slots` | The greeting slots `assign_announcement` knows, with file limits and verification status |
+
+`webex_request` also accepts `file_path`, `file_field` and `form` for any other multipart upload. The audio tools
+never generate or convert audio, so they work with a WAV from any source (Windows speech, a recording, a TTS
+service). Set `WEBEX_MCP_UPLOAD_DIR` to restrict uploads to a single folder.
 
 The skill (`skill/webex-org/SKILL.md`) adds the workflow rules (field filtering, "describe the change and get a
 yes before any write", verify afterwards) and report recipes (org health, license utilization).

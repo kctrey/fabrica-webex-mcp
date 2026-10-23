@@ -37,6 +37,8 @@ These are real orgs: prefer one item first, then the rest.
 | Calling locations | `/telephony/config/locations` | `id,name` |
 | Call queues | `/telephony/config/queues` | `id,name,locationName` |
 | Numbers | `/telephony/config/numbers` | `phoneNumber,state,owner.type` |
+| Announcement repository | `/telephony/config/announcements` (org level), `?locationId=` for a location's own, `/announcements/usage` for limits | `id,name,fileName,level` |
+| Person voicemail settings | `/people/{id}/features/voicemail` (`sendUnansweredCalls.numberOfRings`, greeting state) | |
 | Admin/audit events | `/adminAudit/events`* (needs `orgId`, `from`, `to`) | |
 | Org events | `/events` | `resource,type,created` |
 | CDR | `https://analytics.webexapis.com/v1/cdr_feed` (full URL, different host) | |
@@ -49,7 +51,58 @@ Other Calling config follows the same pattern (`/telephony/config/huntGroups`, `
 - IDs in `licenses` arrays are opaque base64; resolve through `/licenses` (the curated tool does this).
 - The token acts as the admin who logged in: actions are attributed to them and limited by their roles. Compliance scopes need the Compliance Officer role. A 403 usually means a missing role or an unregistered scope, not a bad path.
 - Meetings and analytics APIs may need extra parameters (`hostEmail`, `from`/`to`)*.
+- **People lookups**: `/people?displayName=` matches the *start* of the name and needs 3+ characters; `email=` is exact. Put filters in the `path` (`/people?email=a%40b.com`). A name the user gives may differ from the directory ("James" may be "Jimmy"): say which person you matched. `/telephony/config/people` is not a valid path.
+- Writes that return `204` have no body: always GET the object back and report what you read.
 - Rate limits are handled automatically; if a long loop is slow, that is Retry-After, not a hang.
+
+## Audio and announcements (greetings, prompts, hold music)
+Uploads are common (voicemail greetings, queue and auto attendant prompts). Keep the *audio source* separate from
+the Webex work: the server never generates or converts audio, so this works with any way of producing a WAV.
+
+**Tools** (all writes need `allow_write=true` and a writable org, after the usual described-change-and-yes):
+`inspect_audio` (check a WAV first, read-only), `list_announcements` (add `include_references=true` for usage
+counts), `upload_announcement`, `assign_announcement` (`dry_run=true` previews the exact request), `delete_announcement`,
+`set_voicemail_greeting`, `list_announcement_slots`. `webex_request` also accepts `file_path`/`form` for any other
+multipart endpoint.
+
+**Which place does the audio go?**
+| Goal | Do this |
+|---|---|
+| Voicemail greeting for one person | `set_voicemail_greeting` (entity-level upload; no repository entry) |
+| Greeting/prompt for a call queue or auto attendant | `upload_announcement` (repository), then `assign_announcement` to the slot |
+| Prompt shared by several features, or one location only | Upload once at org level (or with `location`), assign it to each feature |
+| Anything else (hunt group, call park, ...) | Same two steps if its GET shows `greeting` plus `audioAnnouncementFile(s)`; check with a `GET` and `dry_run`; tell the user the slot is unverified |
+
+Webex rejects direct uploads to a queue or auto attendant (404). Features reference repository files by ID with
+`greeting: "CUSTOM"`; a queue slot takes a list (up to 4, played in order), an auto attendant menu takes one file.
+Slots: queue `welcome, comfort, moh, moh_alternate, whisper, comfort_bypass, overflow`; auto attendant
+`business_hours, after_hours` (run `list_announcement_slots` for the current table).
+
+**Workflow**
+1. Get a WAV from whatever the user has (see below). Run `inspect_audio`; relay any warnings. Mono 8 kHz 16-bit PCM is the safe choice for phone audio; the org's per-file limit comes from `/announcements/usage`.
+2. Say what will happen (org, feature, slot, files) and wait for a yes. `upload_announcement` needs a `name` (Webex requires it).
+3. `assign_announcement` with `dry_run=true` first for anything on a live feature, then for real. It returns `before` (keep it to undo) and `after`; trust `verified` and the warnings, not the 204.
+4. Tell the user what was set and ask them to place a test call; only they can hear it.
+
+**Rules learned the hard way**
+- **Links cannot be removed through the API.** Setting a slot back to DEFAULT keeps the stored file links; an empty list or null does nothing. They are only replaced by assigning other files, or released by deleting the feature. So never attach test or demo files to a live queue or auto attendant: build a throwaway one, test, delete it.
+- A file with references cannot be deleted (error 6575). `delete_announcement` checks first and explains; never delete without the user naming the file.
+- A slot that is `enabled: false` (or overflow with `playOverflowGreetingEnabled: false`) will not play even when CUSTOM; the tool warns, tell the user.
+- Before changing any existing feature by hand, save its current settings and diff afterwards; do not restore from a copy taken after you changed it.
+- Location files and org files can be mixed in one queue list. A location file is only valid for features in that location.
+
+**Making a WAV without any outside service**
+- Windows (built in, no install):
+  ```powershell
+  Add-Type -AssemblyName System.Speech
+  $s = New-Object System.Speech.Synthesis.SpeechSynthesizer
+  $fmt = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(8000, [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen, [System.Speech.AudioFormat.AudioChannel]::Mono)
+  $s.SetOutputToWaveFile("greeting.wav", $fmt); $s.Speak("Your text here"); $s.Dispose()
+  ```
+- macOS: `say -o greeting.aiff "Your text"` then `afconvert -f WAVE -d LEI16@8000 -c 1 greeting.aiff greeting.wav` (not tested here).
+- Any recording or a TTS service the user already has (e.g. ElevenLabs via its REST API, a PBX prompt library): ask for the WAV, or generate it with whatever key they have set in the environment. Never ask for the key in chat; if it is not in the environment, tell them how to set it.
+- If the file is MP3 or another format, convert it first (`ffmpeg -i in.mp3 -ac 1 -ar 8000 out.wav` if ffmpeg exists); `inspect_audio` will say when a file is not WAV.
+- Optional hardening for shared machines: set `WEBEX_MCP_UPLOAD_DIR` to restrict uploads to one folder.
 
 ## Report recipes
 **Org health snapshot** (read-only, all orgs unless told otherwise):
