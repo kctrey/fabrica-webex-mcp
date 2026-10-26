@@ -401,3 +401,47 @@ def test_rejected_scope_error_names_xsi():
     urllib.request.urlopen("http://127.0.0.1:8792/callback?error=invalid_scope&state=good")
     t.join()
     assert "invalid_scope" in out["msg"] and "--with-xsi" in out["msg"]
+
+
+def seed_managed(alias="sub", writable=False):
+    seed()
+    reg = config.load()
+    reg["orgs"][alias] = {"org_id": "o2", "name": "Sub", "via": "demo", "writable": writable}
+    config.save(reg)
+
+
+async def test_managed_org_uses_parent_token_and_sends_org_id():
+    seed_managed()
+    seen = []
+
+    def h(req):
+        seen.append((req.headers["authorization"], dict(req.url.params), req.url.path))
+        return httpx.Response(200, json={"items": [1]})
+    c = mk(h)
+    await c.request("sub", "GET", "/people", {"max": 5})
+    await c.request("sub", "GET", "/organizations/o2")
+    await c.request("demo", "GET", "/people")
+    assert seen[0] == ("Bearer A1", {"orgId": "o2", "max": "5"}, "/v1/people")
+    assert "orgId" not in seen[1][1]  # org lookups embed the id in the path
+    assert "orgId" not in seen[2][1]  # registered orgs are untouched
+    assert store.get_tokens("sub") is None
+
+
+async def test_managed_org_person_create_gets_org_id_in_body():
+    seed_managed(writable=True)
+    bodies = []
+
+    def h(req):
+        bodies.append(req.content)
+        return httpx.Response(200, json={"id": "p"})
+    await mk(h).request("sub", "POST", "/people", body={"emails": ["a@b.c"]})
+    assert b'"orgId": "o2"' in bodies[0] or b'"orgId":"o2"' in bodies[0]
+
+
+async def test_managed_org_write_guard_is_its_own():
+    seed_managed()
+    reg = config.load()
+    reg["orgs"]["demo"]["writable"] = True  # parent writable must not unlock the managed org
+    config.save(reg)
+    with pytest.raises(PermissionError, match="read-only"):
+        await server.webex_request("POST", "/people", org="sub", body={}, allow_write=True)

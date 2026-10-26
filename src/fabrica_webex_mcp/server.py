@@ -76,10 +76,12 @@ def list_orgs() -> str:
     now = time.time()
     rows = []
     for alias, o in sorted(reg["orgs"].items()):
-        t = store.get_tokens(alias)
+        t = store.get_tokens(o.get("via") or alias)
         rows.append({
             "alias": alias, "name": o.get("name"), "org_id": o.get("org_id"),
             "writable": o.get("writable", False), "default": alias == reg.get("default"),
+            "type": "managed" if o.get("via") else ("primary" if alias == reg.get("default") else "secondary"),
+            "via": o.get("via"),
             "has_tokens": bool(t),
             "refresh_token_days_left": round((t.refresh_expires_at - now) / 86400, 1) if t and t.refresh_expires_at else None,
         })

@@ -5,7 +5,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 import httpx
 
-from . import auth
+from . import auth, config
 
 BASE = "https://webexapis.com/v1/"
 HOST = "webexapis.com"
@@ -61,6 +61,7 @@ class WebexClient:
     async def _send(self, alias: str, method: str, url: str, params, body,
                     headers: dict | None = None, files: dict | None = None,
                     form: dict | None = None) -> httpx.Response:
+        alias = config.token_alias(alias)  # managed orgs authenticate with their parent's token
         token = await auth.get_access_token(alias, self.http)
         refreshed = False
         for attempt in range(MAX_RETRIES + 1):
@@ -107,6 +108,12 @@ class WebexClient:
         method = method.upper()
         if (files or form) and body is not None:
             raise ValueError("Pass either a JSON body or file/form fields, not both.")
+        target_org = config.managed_org_id(alias)
+        if target_org and not urlsplit(path).path.lstrip("/").removeprefix("v1/").startswith("organizations"):
+            # a managed org is reached through its parent's token by naming the org on every call
+            query = {"orgId": target_org, **(query or {})}
+            if method == "POST" and isinstance(body, dict) and urlsplit(path).path.rstrip("/").endswith("/people"):
+                body = {"orgId": target_org, **body}  # person creation takes orgId in the body
         url, params = build_url(path, query)
         items: list = []
         collection = None

@@ -8,8 +8,21 @@ description: Query, report on, and (with confirmation) change the user's Webex d
 Use the `fabrica-webex` MCP tools (`webex_request`, `list_orgs`, `people_with_licenses`, `workspace_inventory`, `license_assignment_by_location`, `user_registrations`, `calling_feature_audit`, `calling_feature_bulk_update`). Auth, token refresh, pagination, and 429 retry are handled by the server; never ask the user for tokens.
 
 ## Orgs
-- Call `list_orgs` first when the org is unclear. Every tool takes `org` (an alias); omitted means the default org. `org="all"` runs a **read** across every org and groups results by alias.
-- Say which org a result came from whenever more than one is registered.
+Call `list_orgs` at the start of a session (and whenever the org is unclear). Every tool takes `org` (an alias); omitted means the default org. `org="all"` runs a **read** across every org and groups results by alias. Each org has a `type`:
+
+| `type` | What it is | Notes |
+|---|---|---|
+| `primary` | The user's own org and the default alias. | Assumed when the user names no org. |
+| `secondary` | Another org with its own admin login (its own tokens). | Never assumed. Use only when the user names it or clearly refers to it. |
+| `managed` | An org reached through another org's token (`via` names the parent); the server adds `orgId` itself. | Never pass `orgId` yourself. Xsi tools don't work on it. Read-only unless the user turned writes on. |
+
+**Wrong-org safety (the main risk here).**
+- **Reads:** with no org named, use `primary`. State the org in the answer ("From KC Amalgamated: ..."). If the request could plausibly mean another org (the user named a company, a person or a domain that isn't the primary's), ask which org rather than guess. When more than one org is registered, always say which org a result came from.
+- **Writes:** before the first write in a conversation, confirm the target org in plain words even if it is the primary: "This will change **<org name>** (<type>, alias `<alias>`): <the change>. Proceed?" This is the same yes the Writing section requires, so fold the org into it, not a second prompt. Once the user has confirmed an org for the conversation, further writes and reads on that same org need no repeat of the org confirmation (each destructive or bulk change still follows the Writing rules).
+- **Switching:** the moment a write targets a different org than the one last confirmed, or the user changes org mid-conversation, confirm again with the org named. A write to a `secondary` or `managed` org is always confirmed with that org named, even when the primary was confirmed earlier.
+- **Never infer a write target from earlier reads:** if the last read was against `omfs` and the user says "now disable voicemail for Sam", the org is `omfs` only if that was clearly the topic; otherwise ask.
+- **Managed orgs:** some endpoints ignore `orgId` and would act on the parent. Before the first write to a managed org, run a GET of the target object and check that the returned `orgId` matches the managed org's `org_id`; after the write, verify the same way. If a result's `orgId` is the parent's, stop and tell the user.
+- Do not use `org="all"` for anything but reads, and say which orgs were included.
 - Tokens: a refresh token that goes unused ~90 days expires. If a call fails with a refresh error, tell the user to run `fabrica-webex-mcp add-org <alias> --replace`. If `refresh_token_days_left` in `list_orgs` is under ~14, mention it.
 
 ## Reading data (default)
@@ -35,7 +48,7 @@ Use `calling_feature_audit` (read-only) for any check and `calling_feature_bulk_
 **Voicemail lesson (learned the hard way).** "Voicemail to email" is not only `emailCopyOfMessage.enabled`. `messageStorage.storageType=EXTERNAL` delivers voicemail to email even with the copy setting off. In one org turning off the org-level `voiceMessageForwardingEnabled` (`/telephony/config/voicemail/settings`) switched a user's EXTERNAL storage to INTERNAL by itself. So an audit for voicemail-to-email checks the copy flag, `storageType`, and the org-level setting, and a change to one should be re-audited for the others. Workspaces need a Professional license for voicemail; Workspaces (common area) and Hot desk only workspaces return 405.
 
 ## Writing (POST/PUT/PATCH/DELETE)
-1. Describe the exact change (org, endpoint, body, what it affects) and get the user's explicit yes in chat first. Never batch destructive changes under one yes without listing them.
+1. Describe the exact change (**org name and type**, endpoint, body, what it affects) and get the user's explicit yes in chat first. Never batch destructive changes under one yes without listing them.
 2. Call `webex_request` with `allow_write=true`. The server also refuses unless the org is marked writable (`fabrica-webex-mcp set-writable <alias> on`, run by the user). Never try to bypass this.
 3. Writes cannot use `org="all"`.
 4. Verify afterward with a GET and report the result.

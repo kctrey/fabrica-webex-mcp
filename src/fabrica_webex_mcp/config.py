@@ -47,6 +47,17 @@ def get_org(alias: str) -> dict:
     return orgs[alias]
 
 
+def token_alias(alias: str) -> str:
+    """The alias whose tokens authenticate `alias`: a managed org borrows its parent's ("via")."""
+    return load()["orgs"].get(alias, {}).get("via") or alias
+
+
+def managed_org_id(alias: str) -> str | None:
+    """The target orgId to send on every call if `alias` is a managed org, else None."""
+    o = load()["orgs"].get(alias, {})
+    return o.get("org_id") if o.get("via") else None
+
+
 def resolve(alias: str | None) -> str:
     """Return a concrete alias, falling back to the default org."""
     reg = load()

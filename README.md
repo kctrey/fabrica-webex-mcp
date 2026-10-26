@@ -91,6 +91,22 @@ Other commands: `set-default`, `remove-org`, `add-org <alias> --replace` (re-log
 orgs where Cisco has enabled it; to add it to an org you already registered, run
 `add-org <alias> --replace --with-xsi`).
 
+### Managed orgs (other orgs your admin token can reach)
+
+An admin token for a partner or parent org can often read, and sometimes write, other orgs by naming them with
+`orgId`. Register those as managed orgs instead of logging in to each one:
+
+```
+fabrica-webex-mcp discover-orgs myorg                              # orgs myorg's token can reach
+fabrica-webex-mcp add-managed-org omfs --via myorg --name "OMFS Enterprises"
+fabrica-webex-mcp set-writable omfs on                             # optional; read-only by default
+```
+
+A managed alias borrows its parent's login and the server adds `orgId` to every call (and to the body of
+`POST /people`). Each alias has its own `writable` flag. Xsi (`user_registrations`) is not available for them.
+`orgId` support varies by endpoint, so verify a write on a managed org before trusting it: an endpoint that ignores
+`orgId` would act on the parent org instead.
+
 ## 4. Connect your assistant
 
 The server is the command `fabrica-webex-mcp serve` (stdio). In any MCP client that supports local stdio servers,

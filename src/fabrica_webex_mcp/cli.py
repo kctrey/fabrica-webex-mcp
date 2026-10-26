@@ -37,6 +37,8 @@ def cmd_add_org(a) -> None:
     reg = config.load()
     if a.alias in reg["orgs"] and not a.replace:
         sys.exit(f"Org '{a.alias}' already exists. Use --replace to overwrite its tokens.")
+    if reg["orgs"].get(a.alias, {}).get("via"):
+        sys.exit(f"'{a.alias}' is a managed org; remove it first to register it with its own login.")
     if not store.get_client():
         sys.exit("Run `fabrica-webex-mcp setup <client_id>` first.")
     code = redirect = refresh_token = None
@@ -67,7 +69,46 @@ def cmd_list_orgs(a) -> None:
     reg = config.load()
     for alias, o in sorted(reg["orgs"].items()):
         mark = "*" if alias == reg.get("default") else " "
-        print(f"{mark} {alias:15} {o.get('name')}  writable={o.get('writable', False)}  tokens={'yes' if store.get_tokens(alias) else 'NO'}")
+        via = o.get("via")
+        auth_note = f"via={via}" if via else f"tokens={'yes' if store.get_tokens(alias) else 'NO'}"
+        print(f"{mark} {alias:15} {o.get('name')}  writable={o.get('writable', False)}  {auth_note}")
+
+
+async def _visible_orgs(parent: str) -> list[dict]:
+    async with httpx.AsyncClient(timeout=30) as http:
+        return (await WebexClient(http).request(parent, "GET", "/organizations"))["items"]
+
+
+def cmd_discover_orgs(a) -> None:
+    parent = config.resolve(a.parent)
+    if config.get_org(parent).get("via"):
+        sys.exit(f"'{parent}' is itself a managed org; discover through a registered org.")
+    for o in asyncio.run(_visible_orgs(parent)):
+        print(f"{o['displayName']}  {o['id']}")
+
+
+def cmd_add_managed_org(a) -> None:
+    reg = config.load()
+    parent = config.resolve(a.via)
+    if reg["orgs"][parent].get("via"):
+        sys.exit(f"'{parent}' is itself a managed org; use a registered org as --via.")
+    if a.alias in reg["orgs"]:
+        sys.exit(f"Alias '{a.alias}' already exists.")
+    visible = asyncio.run(_visible_orgs(parent))
+    if a.org_id:
+        match = [o for o in visible if o["id"] == a.org_id]
+    else:
+        match = [o for o in visible if o["displayName"].lower() == a.name.lower()]
+    if not match:
+        sys.exit(f"No org matching that {'id' if a.org_id else 'name'} is visible to '{parent}'. "
+                 f"Run `fabrica-webex-mcp discover-orgs {parent}` to see what is.")
+    if len(match) > 1:
+        sys.exit("More than one org has that name; pass --org-id instead.")
+    org = match[0]
+    reg["orgs"][a.alias] = {"org_id": org["id"], "name": org["displayName"], "via": parent, "writable": False}
+    config.save(reg)
+    print(f"Added managed org '{a.alias}': {org['displayName']} via '{parent}'. Read-only; "
+          f"enable writes with `fabrica-webex-mcp set-writable {a.alias} on`.")
 
 
 def cmd_test_org(a) -> None:
@@ -75,13 +116,16 @@ def cmd_test_org(a) -> None:
 
     async def go():
         async with httpx.AsyncClient(timeout=30) as http:
-            return await WebexClient(http).request(alias, "GET", "/organizations", max_items=1)
+            return await WebexClient(http).request(alias, "GET", f"/organizations/{config.get_org(alias)['org_id']}")
     r = asyncio.run(go())
-    print(f"OK: {alias} -> {r['items'][0].get('displayName') if r['items'] else '?'}")
+    print(f"OK: {alias} -> {r['data'].get('displayName', '?')}")
 
 
 def cmd_remove_org(a) -> None:
     reg = config.load()
+    dependents = [k for k, o in reg["orgs"].items() if o.get("via") == a.alias]
+    if dependents:
+        sys.exit(f"Managed orgs depend on '{a.alias}': {', '.join(sorted(dependents))}. Remove them first.")
     reg["orgs"].pop(a.alias, None)
     if reg.get("default") == a.alias:
         reg["default"] = next(iter(sorted(reg["orgs"])), None)
@@ -121,6 +165,13 @@ def main() -> None:
     s.add_argument("--with-xsi", action="store_true",
                    help="also request spark-admin:xsi (only if Cisco enabled it for your org); needed by user_registrations")
     s.set_defaults(f=cmd_add_org)
+    s = sub.add_parser("discover-orgs", help="list the orgs a registered org's token can reach")
+    s.add_argument("parent", nargs="?"); s.set_defaults(f=cmd_discover_orgs)
+    s = sub.add_parser("add-managed-org", help="register an org reached through another org's token (sends orgId)")
+    s.add_argument("alias"); s.add_argument("--via", required=True, help="registered alias whose token has access")
+    g = s.add_mutually_exclusive_group(required=True)
+    g.add_argument("--name", help="exact org display name"); g.add_argument("--org-id")
+    s.set_defaults(f=cmd_add_managed_org)
     sub.add_parser("list-orgs").set_defaults(f=cmd_list_orgs)
     s = sub.add_parser("test-org"); s.add_argument("alias", nargs="?"); s.set_defaults(f=cmd_test_org)
     s = sub.add_parser("remove-org"); s.add_argument("alias"); s.set_defaults(f=cmd_remove_org)

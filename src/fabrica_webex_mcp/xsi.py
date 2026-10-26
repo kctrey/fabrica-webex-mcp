@@ -269,6 +269,9 @@ def _error_message(response) -> str:
 
 async def endpoint(c: WebexClient, alias: str) -> str:
     """The org's Xsi-Actions base URL, discovered once per org."""
+    if config.managed_org_id(alias):
+        raise XsiError("Xsi is not available for managed orgs: it needs a token issued by that org itself. "
+                       "Register the org with `add-org` instead.")
     if alias not in _endpoints:
         # callingData=true is required: without it the org omits xsiActionsEndpoint rather than erroring
         org = (await c.request(alias, "GET", f"/organizations/{config.get_org(alias)['org_id']}",
